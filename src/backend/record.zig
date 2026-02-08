@@ -9,40 +9,58 @@ pub const Value = union(enum) {
     blob: []const u8,
 };
 
-pub fn parseRecord(allocator: std.mem.Allocator, payload: []const u8) ![]Value {
+pub fn parse_record(allocator: std.mem.Allocator, payload: []const u8) ![]Value {
     var fbs = std.io.fixedBufferStream(payload);
     var reader = fbs.reader();
 
     const header_size = try read_variant(&reader);
 
-    // parse serial types
     var serial_types = std.ArrayList(u64).init(allocator);
     defer serial_types.deinit();
+
     while (fbs.pos < header_size) {
         try serial_types.append(try read_variant(&reader));
     }
 
-    // parse data based on the serial type
     var values = try allocator.alloc(Value, serial_types.items.len);
-    for (serial_types.items.len, 0..) |serial_type, i| {
-        values[i] = switch (serial_type) {
-            0 => null,
+    errdefer allocator.free(values);
+
+    for (serial_types.items, 0..) |stype, i| {
+        values[i] = switch (stype) {
+            0 => .null,
             1 => Value{ .int = try reader.readInt(i8, .big) },
             2 => Value{ .int = try reader.readInt(i16, .big) },
-            3 => Value{ .int = try reader.readInt(i24, .big) },
+            3 => blk: {
+                const bytes = try reader.readBytesNoEof(3);
+                const res = (@as(i32, bytes[0]) << 16) | (@as(i32, bytes[1]) << 8) | @as(i32, bytes[2]);
+                break :blk Value{ .int = res };
+            },
             4 => Value{ .int = try reader.readInt(i32, .big) },
-            5 => Value{ .int = try reader.readInt(i48, .big) },
+            5 => blk: {
+                const bytes = try reader.readBytesNoEof(6);
+                var res: i64 = 0;
+                for (bytes) |byte| res = (res << 8) | byte;
+                break :blk Value{ .int = res };
+            },
             6 => Value{ .int = try reader.readInt(i64, .big) },
-            7 => Value{ .int = try reader.readInt(f64, .big) },
+            7 => Value{ .float = @bitCast(try reader.readInt(u64, .big)) },
             8 => Value{ .int = 0 },
             9 => Value{ .int = 1 },
-            else => if (serial_type >= 13 and (serial_type % 2 == 1)) { // string
-                const len = (serial_type - 13) / 2;
-                const buf = try allocator.alloc(u8, len);
-                _ = try reader.readAll(buf);
-                return Value{ .string = buf };
-            } else { // blob
-                return error.UnsupportedType;
+            10, 11 => return error.InternalReservedTypes,
+            else => blk: {
+                if (stype >= 13 and (stype % 2 == 1)) {
+                    const len = (stype - 13) / 2;
+                    const buf = try allocator.alloc(u8, len);
+                    _ = try reader.readAll(buf);
+                    break :blk Value{ .string = buf };
+                } else if (stype >= 12 and (stype % 2 == 0)) {
+                    const len = (stype - 12) / 2;
+                    const buf = try allocator.alloc(u8, len);
+                    _ = try reader.readAll(buf);
+                    break :blk Value{ .blob = buf };
+                } else {
+                    return error.UnsupportedType;
+                }
             },
         };
     }

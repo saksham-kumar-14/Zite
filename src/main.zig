@@ -3,6 +3,8 @@ const std = @import("std");
 const Reader = @import("backend/b-tree.zig").Reader;
 const hexdump = @import("utils/func.zig").hexdump;
 
+const display_record = @import("backend/b-tree.zig").display_record;
+
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
@@ -59,10 +61,22 @@ pub fn main() !void {
         for (cells, 0..) |cell, i| {
             try stdout.print("Cell {}: ", .{i});
             switch (cell) {
-                .interior_index => |c| try stdout.print("InteriorIndex (left child: {}, payload_size: {})\n", .{ c.left_child_ptr, c.payload_size }),
-                .interior_table => |c| try stdout.print("InteriorTable (left child: {}, rowid: {})\n", .{ c.left_child_ptr, c.row_id }),
-                .leaf_index => |c| try stdout.print("LeafIndex (payload_size: {})\n", .{c.payload_size}),
-                .leaf_table => |c| try stdout.print("LeafTable (rowid: {}, payload_size: {})\n", .{ c.row_id, c.payload_size }),
+                .interior_index => |c| {
+                    try stdout.print("InteriorIndex (left child: {}, payload_size: {})\n", .{ c.left_child_ptr, c.payload_size });
+                    try display_record(cell, allocator, stdout);
+                },
+                .interior_table => |c| {
+                    try stdout.print("InteriorTable (left child: {}, rowid: {})\n", .{ c.left_child_ptr, c.row_id });
+                    try display_record(cell, allocator, stdout);
+                },
+                .leaf_index => |c| {
+                    try stdout.print("LeafIndex (payload_size: {})\n", .{c.payload_size});
+                    try display_record(cell, allocator, stdout);
+                },
+                .leaf_table => |c| {
+                    try stdout.print("LeafTable (rowid: {}, payload_size: {})\n", .{ c.row_id, c.payload_size });
+                    try display_record(cell, allocator, stdout);
+                },
             }
         }
     }

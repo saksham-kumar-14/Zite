@@ -3,6 +3,8 @@ const MAGIC_HEADER = @import("../utils/constant.zig").MAGIC_HEADER;
 const HEADER_SIZE = @import("../utils/constant.zig").HEADER_SIZE;
 const read_variant = @import("../utils/func.zig").read_variant;
 
+const parse_record = @import("record.zig").parse_record;
+
 pub const PageType = enum(u8) {
     interior_index = 2,
     interior_table = 5,
@@ -202,3 +204,34 @@ pub const Reader = struct {
         return cells;
     }
 };
+
+pub fn display_record(c: CellType, allocator: std.mem.Allocator, stdout: anytype) !void {
+    const payload = switch (c) {
+        .leaf_table => |t| t.payload,
+        .leaf_index => |t| t.payload,
+        .interior_index => |t| t.payload,
+        .interior_table => return,
+    };
+
+    const values = try parse_record(allocator, payload);
+    defer {
+        for (values) |val| {
+            switch (val) {
+                .string, .blob => |b| allocator.free(b),
+                else => {},
+            }
+        }
+        allocator.free(values);
+    }
+
+    for (values, 0..) |val, col_idx| {
+        try stdout.print("  Col {d}: ", .{col_idx});
+        switch (val) {
+            .null => try stdout.print("NULL\n", .{}),
+            .int => |v| try stdout.print("INT {d}\n", .{v}),
+            .float => |v| try stdout.print("FLOAT {d}\n", .{v}),
+            .string => |v| try stdout.print("STR \"{s}\"\n", .{v}),
+            .blob => |v| try stdout.print("BLOB ({d} bytes)\n", .{v.len}),
+        }
+    }
+}
