@@ -10,6 +10,8 @@ pub const PageType = enum(u8) {
     leaf_table = 13,
 };
 
+// leaf - contains actual dat
+// interior - contains pointers to other pages
 pub const CellType = union(PageType) {
     interior_index: struct {
         left_child_ptr: u32,
@@ -33,10 +35,13 @@ pub const CellType = union(PageType) {
 
 pub const PageHeader = struct {
     page_type: PageType,
-    first_freeblock: u16,
+    first_freeblock: u16, // The byte offset to the first "freeblock" in the page.
+    // SQLite manages deleted or unused space within a page using a linked list;
+    // if this is 0, there are no freeblocks.
     cell_count: u16,
-    cell_content_start: u16,
-    fragmented_free_bytes: u8,
+    cell_content_start: u16, // data is usually filled bottom up
+    fragmented_free_bytes: u8, // The number of "lost" bytes within the cell content area.
+    // These are gaps too small to be added to the freeblock list.
     right_ptr: ?u32,
 };
 
