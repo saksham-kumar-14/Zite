@@ -2,16 +2,19 @@ const std = @import("std");
 
 const Reader = @import("backend/b-tree.zig").Reader;
 const hexdump = @import("utils/func.zig").hexdump;
-
 const display_record = @import("backend/b-tree.zig").display_record;
+const SchemaRecord = @import("utils/schema.zig").SchemaRecord;
+const parse_record = @import("backend/record.zig").parse_record;
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
-    const allocator = gpa.allocator();
+
+    var arena = std.heap.ArenaAllocator.init(gpa.allocator());
+    defer arena.deinit();
+    const allocator = arena.allocator();
 
     const args = try std.process.argsAlloc(allocator);
-    defer std.process.argsFree(allocator, args);
 
     if (args.len < 3) {
         try std.io.getStdErr().writer().print(
@@ -35,7 +38,6 @@ pub fn main() !void {
 
         // page -> 1
         const page1 = try reader.read_page(1, allocator);
-        defer allocator.free(page1);
 
         const header = try Reader.parse_page_header(page1, true);
         try stdout.print("Page type: {}\n", .{header.page_type});
@@ -44,17 +46,6 @@ pub fn main() !void {
 
         // cell
         const cells = try Reader.parse_cells(page1, true, allocator);
-        defer {
-            for (cells) |cell| {
-                switch (cell) {
-                    .leaf_table => |c| allocator.free(c.payload),
-                    .leaf_index => |c| allocator.free(c.payload),
-                    .interior_index => |c| allocator.free(c.payload),
-                    .interior_table => {},
-                }
-            }
-            allocator.free(cells);
-        }
 
         try stdout.print("Number of cells on page 1: {}\n", .{cells.len});
 
@@ -79,5 +70,38 @@ pub fn main() !void {
                 },
             }
         }
+    } else if (std.mem.eql(u8, cmd, ".tables")) {
+        var reader = try Reader.init(file_path);
+        defer reader.deinit();
+        const stdout = std.io.getStdOut().writer();
+
+        const page1 = try reader.read_page(1, allocator);
+        const cells = try Reader.parse_cells(page1, true, allocator);
+
+        var schema_records = std.ArrayList(SchemaRecord).init(allocator);
+
+        // extract data and parse into records
+        for (cells) |cell| {
+            const payload = switch (cell) {
+                .leaf_table => |c| c.payload,
+                else => continue, // Schema records are stored in leaf_table cells
+            };
+
+            const values = try parse_record(allocator, payload);
+            const record = try SchemaRecord.from_record(values);
+
+            try schema_records.append(record);
+        }
+
+        // print table names
+        for (schema_records.items) |record| {
+            std.debug.print("DEBUG: type='{s}', name='{s}'\n", .{ record.type, record.name });
+            if (std.mem.eql(u8, record.type, "table") and
+                !std.mem.startsWith(u8, record.name, "sqlite_"))
+            {
+                try stdout.print("{s} ", .{record.name});
+            }
+        }
+        try stdout.print("\n", .{});
     }
 }
